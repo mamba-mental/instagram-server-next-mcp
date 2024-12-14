@@ -6,14 +6,12 @@ import { PostProcessor, PostSaver } from './utils/post.js';
 import { chromium, Browser, Page, BrowserContext } from 'playwright';
 import debug from 'debug';
 
-const logInit = debug('instagram:init');
-const logNav = debug('instagram:navigation');
-const logPost = debug('instagram:post');
-const logError = debug('instagram:error');
+const log = debug('instagram');
 
 const BATCH_SIZE = 3;
 const SCROLL_ATTEMPTS = 3;
-const PROGRESS_INTERVAL = 45000; // 45 seconds between updates
+const PROGRESS_INTERVAL = 60000; // Increased to 60 seconds
+const MAX_CAPTION_LENGTH = 150; // Limit caption length
 
 @handleClassAsyncErrors
 export class InstagramService implements IInstagramService {
@@ -29,25 +27,20 @@ export class InstagramService implements IInstagramService {
   constructor() {
     this.postProcessor = new PostProcessor();
     this.postSaver = new PostSaver(this.config.instagram.postsLogFile);
-    logInit('Instagram service initialized');
   }
 
   private startHeartbeat(onProgress: ProgressCallback): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-    }
-
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
     this.heartbeatInterval = setInterval(() => {
       const now = Date.now();
       if (now - this.lastProgressUpdate >= PROGRESS_INTERVAL) {
-        const update: IProgressUpdate = {
+        onProgress({
           type: 'progress',
           message: 'Processing...',
           progress: this.currentProgress,
           total: this.totalProgress,
           keepAlive: true
-        };
-        onProgress(update);
+        });
         this.lastProgressUpdate = now;
       }
     }, PROGRESS_INTERVAL);
@@ -60,27 +53,23 @@ export class InstagramService implements IInstagramService {
     }
   }
 
-  private sendProgress(message: string, onProgress?: ProgressCallback, keepAlive: boolean = false) {
+  private sendProgress(message: string, onProgress?: ProgressCallback, keepAlive = false) {
     const now = Date.now();
     if (now - this.lastProgressUpdate >= PROGRESS_INTERVAL || !keepAlive) {
       this.currentProgress++;
-      const update: IProgressUpdate = {
+      onProgress?.({
         type: 'progress',
-        message,
+        message: message.substring(0, 50), // Limit message length
         progress: this.currentProgress,
         total: this.totalProgress,
         keepAlive
-      };
-      logPost(`Progress ${this.currentProgress}/${this.totalProgress}: ${message}`);
-      onProgress?.(update);
+      });
       this.lastProgressUpdate = now;
     }
   }
 
   private async initContext(): Promise<BrowserContext> {
     if (!this.context) {
-      logInit('Initializing browser context...');
-      
       const browser = await chromium.connectOverCDP('http://localhost:9222');
       const contexts = browser.contexts();
       
@@ -93,33 +82,21 @@ export class InstagramService implements IInstagramService {
       });
 
       await this.context.route('**/*', async (route, request) => {
-        logNav(`${request.method()} ${request.url()}`);
-        const headers = {
-          ...request.headers(),
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Sec-Fetch-Site': 'same-origin',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Dest': 'empty',
-          'X-IG-App-ID': '936619743392459',
-          'X-Requested-With': 'XMLHttpRequest',
-          'X-ASBD-ID': '129477',
-          'X-IG-WWW-Claim': '0'
-        };
-        await route.continue({ headers });
+        await route.continue({
+          headers: {
+            ...request.headers(),
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Dest': 'empty',
+            'X-IG-App-ID': '936619743392459',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-ASBD-ID': '129477',
+            'X-IG-WWW-Claim': '0'
+          }
+        });
       });
-
-      this.context.on('console', msg => {
-        const type = msg.type();
-        const text = msg.text();
-        if (type === 'error') {
-          logError(`Browser console error: ${text}`);
-        } else {
-          logNav(`Browser console ${type}: ${text}`);
-        }
-      });
-
-      logInit('Browser context initialized');
     }
     return this.context;
   }
@@ -130,35 +107,26 @@ export class InstagramService implements IInstagramService {
     startFrom: number = 0,
     onProgress?: ProgressCallback
   ): Promise<IInstagramPost[]> {
-    if (!onProgress) {
-      throw new Error('Progress callback is required for long-running operations');
-    }
-
+    if (!onProgress) throw new Error('Progress callback required');
     this.startHeartbeat(onProgress);
 
     try {
       this.currentProgress = 0;
-      this.totalProgress = 10;
+      this.totalProgress = 5;
 
       const context = await this.initContext();
       const page = await context.newPage();
 
       try {
-        this.sendProgress('Initializing browser...', onProgress, true);
-        await this.delay(1000);
+        this.sendProgress('Loading...', onProgress, true);
         
-        this.sendProgress(`Navigating to profile: ${username}`, onProgress, true);
         await page.goto(`https://www.instagram.com/${username}/`, {
           waitUntil: 'domcontentloaded',
           timeout: parseInt(process.env.TIMEOUT || '30000')
         });
 
-        this.sendProgress('Loading initial posts...', onProgress, true);
         const postLinks = await this.getPostLinks(page, startFrom + BATCH_SIZE);
-        
-        if (!postLinks.length) {
-          throw new InstagramError('No posts found');
-        }
+        if (!postLinks.length) throw new InstagramError('No posts found');
 
         const fetchedPosts = await this.postSaver.loadFetchedPosts();
         const endIndex = limit === 'all' ? 
@@ -166,26 +134,18 @@ export class InstagramService implements IInstagramService {
           Math.min(startFrom + (limit || BATCH_SIZE), postLinks.length);
         
         const targetLinks = postLinks.slice(startFrom, endIndex);
-        this.totalProgress = this.currentProgress + (targetLinks.length * 3);
+        this.totalProgress = this.currentProgress + targetLinks.length;
         
         const posts: IInstagramPost[] = [];
-        for (let i = 0; i < targetLinks.length; i++) {
-          const postUrl = targetLinks[i];
-          if (!postUrl) continue;
-
+        for (const postUrl of targetLinks) {
           try {
-            this.sendProgress(`Processing post ${startFrom + i + 1} of ${endIndex}`, onProgress, true);
-            
             await page.goto(postUrl, {
               waitUntil: 'domcontentloaded',
               timeout: parseInt(process.env.TIMEOUT || '30000')
             });
 
             const postData = await this.extractPostData(page);
-            if (!postData) {
-              logPost('No data found for post, skipping...');
-              continue;
-            }
+            if (!postData) continue;
 
             const post = await this.postProcessor.processPost(
               postData,
@@ -198,20 +158,16 @@ export class InstagramService implements IInstagramService {
             await this.postSaver.saveFetchedPosts(fetchedPosts);
 
             posts.push(post);
-
-            if (i < targetLinks.length - 1) {
-              await this.delay(3000);
-            }
+            await this.delay(2000);
           } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            logError(`Error processing post ${startFrom + i + 1}: ${errorMessage}`);
+            log('Post error: %s', error instanceof Error ? error.message : String(error));
             continue;
           }
         }
 
         const hasMore = endIndex < postLinks.length;
         this.sendProgress(
-          hasMore ? `Processed ${posts.length} posts, more available` : 'Finished processing posts',
+          hasMore ? 'More available' : 'Complete',
           onProgress,
           hasMore
         );
@@ -221,8 +177,7 @@ export class InstagramService implements IInstagramService {
         await page.close();
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logError(`Fatal error: ${errorMessage}`);
+      log('Fatal error: %s', error instanceof Error ? error.message : String(error));
       throw error;
     } finally {
       this.stopHeartbeat();
@@ -237,29 +192,25 @@ export class InstagramService implements IInstagramService {
     while (attempts < SCROLL_ATTEMPTS) {
       previousHeight = await page.evaluate(() => document.body.scrollHeight);
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await this.delay(3000);
+      await this.delay(2000);
 
       links = await page.evaluate(() => {
         const links = new Set<string>();
         document.querySelectorAll('a').forEach(anchor => {
           const href = anchor.href;
           if (href && (href.includes('/p/') || href.includes('/reel/'))) {
-            if (anchor.querySelector('img')) {
-              links.add(href);
-            }
+            if (anchor.querySelector('img')) links.add(href);
           }
         });
         return Array.from(links);
       });
 
-      if (links.length >= targetCount) {
-        break;
-      }
+      if (links.length >= targetCount) break;
 
       const currentHeight = await page.evaluate(() => document.body.scrollHeight);
       if (currentHeight <= previousHeight) {
         attempts++;
-        await this.delay(2000);
+        await this.delay(1000);
       }
     }
 
@@ -268,7 +219,7 @@ export class InstagramService implements IInstagramService {
 
   private async extractPostData(page: Page): Promise<IPostData | null> {
     try {
-      return await page.evaluate(() => {
+      return await page.evaluate((maxLength) => {
         const img = document.querySelector('img:not([src*="150x150"]):not([src*="profile"])');
         const video = document.querySelector('video');
         const textElements = Array.from(document.querySelectorAll('*'));
@@ -277,7 +228,7 @@ export class InstagramService implements IInstagramService {
         for (const element of textElements) {
           const text = element.textContent?.trim() || '';
           if (text.includes('#') || text.length > 30) {
-            caption = text;
+            caption = text.substring(0, maxLength);
             break;
           }
         }
@@ -294,7 +245,7 @@ export class InstagramService implements IInstagramService {
         return {
           type: video ? 'video' as const : 'image' as const,
           mediaUrl,
-          alt: img?.getAttribute('alt') || video?.getAttribute('alt') || '',
+          alt: (img?.getAttribute('alt') || video?.getAttribute('alt') || '').substring(0, 100),
           caption,
           timestamp,
           postUrl: window.location.href,
@@ -303,9 +254,9 @@ export class InstagramService implements IInstagramService {
             posterUrl: video.getAttribute('poster') || '',
           }),
         };
-      });
+      }, MAX_CAPTION_LENGTH);
     } catch (error) {
-      logError(`Error extracting post data: ${error instanceof Error ? error.message : String(error)}`);
+      log('Extract error: %s', error instanceof Error ? error.message : String(error));
       return null;
     }
   }
@@ -317,10 +268,8 @@ export class InstagramService implements IInstagramService {
   public async close(): Promise<void> {
     this.stopHeartbeat();
     if (this.context) {
-      logInit('Closing browser context...');
       await this.context.close();
       this.context = null;
-      logInit('Browser context closed');
     }
   }
 }

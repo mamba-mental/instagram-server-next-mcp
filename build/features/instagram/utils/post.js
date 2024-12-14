@@ -3,37 +3,25 @@ import fs from 'fs/promises';
 import { FileSystemError } from '../../../core/utils/errors.js';
 import { MediaDownloader } from './media.js';
 import { SEOGenerator } from './seo.js';
-/**
- * Service for processing Instagram posts
- */
 export class PostProcessor {
     constructor() {
         this.seoGenerator = new SEOGenerator();
         this.mediaDownloader = new MediaDownloader();
     }
-    /**
-     * Process post data and save media
-     */
     async processPost(postData, saveDir, username) {
-        // Create post directory
         const postId = MediaDownloader.getPostIdFromUrl(postData.postUrl);
-        const timestamp = new Date(postData.timestamp);
-        const dateStr = timestamp.toISOString().split('T')[0];
+        const dateStr = new Date(postData.timestamp).toISOString().split('T')[0];
         const postDir = path.join(saveDir, username, dateStr, MediaDownloader.sanitizeFilename(postId));
-        // Download media
         const mediaExt = postData.type === 'video' ? '.mp4' : '.jpg';
         const mediaPath = path.join(postDir, `media${mediaExt}`);
         await this.mediaDownloader.downloadMedia(postData.type === 'video' && postData.videoUrl ? postData.videoUrl : postData.mediaUrl, mediaPath);
-        // Download poster for videos
         let posterPath;
         if (postData.type === 'video' && postData.posterUrl) {
             posterPath = path.join(postDir, 'poster.jpg');
             await this.mediaDownloader.downloadPoster(postData.posterUrl, posterPath);
         }
-        // Extract hashtags
         const hashtags = this.seoGenerator.extractHashtags(postData.caption);
-        // Create post object
-        const post = {
+        return {
             id: postId,
             type: postData.type,
             mediaUrl: postData.mediaUrl,
@@ -55,58 +43,49 @@ export class PostProcessor {
                 posterUrl: postData.posterUrl
             })
         };
-        return post;
     }
 }
-/**
- * Service for saving and loading post data
- */
 export class PostSaver {
     constructor(postsLogFile) {
+        this.postsCache = null;
         this.postsLogFile = postsLogFile;
     }
-    /**
-     * Save post metadata
-     */
     async savePost(post, saveDir) {
         try {
             const postDir = path.dirname(post.localMediaPath);
-            const metadataPath = path.join(postDir, 'metadata.json');
-            await fs.writeFile(metadataPath, JSON.stringify({
+            await fs.writeFile(path.join(postDir, 'metadata.json'), JSON.stringify({
                 ...post,
                 fetchDate: new Date().toISOString()
-            }, null, 2));
+            }));
         }
         catch (error) {
-            throw new FileSystemError(`Failed to save post metadata: ${error instanceof Error ? error.message : String(error)}`);
+            throw new FileSystemError(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
-    /**
-     * Load previously fetched posts
-     */
     async loadFetchedPosts() {
+        if (this.postsCache)
+            return this.postsCache;
         try {
             const data = await fs.readFile(this.postsLogFile, 'utf-8');
             const log = JSON.parse(data);
-            return new Map(Object.entries(log.posts || {}));
+            this.postsCache = new Map(Object.entries(log.posts || {}));
+            return this.postsCache;
         }
         catch {
-            return new Map();
+            this.postsCache = new Map();
+            return this.postsCache;
         }
     }
-    /**
-     * Save fetched posts log
-     */
     async saveFetchedPosts(posts) {
         try {
-            const log = {
+            await fs.writeFile(this.postsLogFile, JSON.stringify({
                 lastFetch: new Date().toISOString(),
                 posts: Object.fromEntries(posts)
-            };
-            await fs.writeFile(this.postsLogFile, JSON.stringify(log, null, 2));
+            }));
+            this.postsCache = posts;
         }
         catch (error) {
-            throw new FileSystemError(`Failed to save fetched posts log: ${error instanceof Error ? error.message : String(error)}`);
+            throw new FileSystemError(`Log save failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 }
