@@ -1,11 +1,13 @@
 /**
- * Production Version of Instagram MCP Server
- * Handles all processing locally without LLM interaction:
- * - Efficient data processing and caching
- * - Minimal logging
- * - Optimized for performance
+ * Debug Version of Instagram MCP Server
+ * This version is designed for development and debugging:
+ * - Maintains LLM interaction for detailed feedback
+ * - Provides verbose logging and progress updates
+ * - Useful for testing and troubleshooting
  * 
- * For debugging and development, use server.debug.ts
+ * To use this version:
+ * 1. Rename this file to server.ts
+ * 2. Update index.ts to import from './server.js'
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -26,7 +28,7 @@ export class InstagramMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name: 'instagram-server',
+        name: 'instagram-server-debug',
         version: '0.2.0',
       },
       {
@@ -39,7 +41,7 @@ export class InstagramMCPServer {
     this.instagramService = new InstagramService();
     this.setupToolHandlers();
     
-    this.server.onerror = (error) => console.error('[Error]', error);
+    this.server.onerror = (error) => console.error('[MCP Debug Error]', error);
     process.on('SIGINT', async () => {
       await this.cleanup();
       process.exit(0);
@@ -91,12 +93,14 @@ export class InstagramMCPServer {
       }
 
       try {
+        console.error('[Debug] Fetching posts for', args.username);
         const posts = await this.instagramService.fetchPosts(
           args.username,
           args.limit,
           args.startFrom,
           ((message: string | IProgressUpdate) => {
             if (typeof message === 'string') {
+              console.error('[Debug Progress]', message);
               this.server.notification({
                 method: 'progress',
                 params: {
@@ -106,6 +110,7 @@ export class InstagramMCPServer {
                 }
               });
             } else {
+              console.error('[Debug Progress]', message);
               this.server.notification({
                 method: 'progress',
                 params: {
@@ -118,6 +123,7 @@ export class InstagramMCPServer {
             }
           }) as ProgressCallback
         );
+        console.error('[Debug] Fetched', posts.length, 'posts');
 
         return {
           content: [
@@ -132,13 +138,14 @@ export class InstagramMCPServer {
                     size: posts.length
                   },
                   nextStartFrom: (args.startFrom || 0) + posts.length,
-                  hasMore: posts.length === 3
+                  hasMore: posts.length === 3 // Using BATCH_SIZE
                 }
               }
             }
           ]
         };
       } catch (error) {
+        console.error('[Debug Error]', error);
         return {
           content: [
             {
@@ -175,8 +182,9 @@ export class InstagramMCPServer {
   public async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
+    console.error('Instagram MCP Debug Server running on stdio');
   }
 }
 
 const server = new InstagramMCPServer();
-server.run().catch(console.error);
+server.run().catch(error => console.error('[Debug Fatal Error]', error));

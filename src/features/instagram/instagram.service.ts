@@ -10,8 +10,8 @@ const log = debug('instagram');
 
 const BATCH_SIZE = 3;
 const SCROLL_ATTEMPTS = 3;
-const PROGRESS_INTERVAL = 60000; // Increased to 60 seconds
-const MAX_CAPTION_LENGTH = 150; // Limit caption length
+const PROGRESS_INTERVAL = 60000;
+const MAX_CAPTION_LENGTH = 150;
 
 @handleClassAsyncErrors
 export class InstagramService implements IInstagramService {
@@ -23,10 +23,26 @@ export class InstagramService implements IInstagramService {
   private totalProgress = 0;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private lastProgressUpdate = 0;
+  private cachedPostLinks: string[] = [];
+  private lastFetchTimestamp = 0;
+  private CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   constructor() {
     this.postProcessor = new PostProcessor();
     this.postSaver = new PostSaver(this.config.instagram.postsLogFile);
+  }
+
+  private async getCachedOrFetchLinks(page: Page, targetCount: number): Promise<string[]> {
+    const now = Date.now();
+    if (this.cachedPostLinks.length >= targetCount && 
+        now - this.lastFetchTimestamp < this.CACHE_TTL) {
+      return this.cachedPostLinks;
+    }
+
+    const links = await this.getPostLinks(page, targetCount);
+    this.cachedPostLinks = links;
+    this.lastFetchTimestamp = now;
+    return links;
   }
 
   private startHeartbeat(onProgress: ProgressCallback): void {
@@ -59,7 +75,7 @@ export class InstagramService implements IInstagramService {
       this.currentProgress++;
       onProgress?.({
         type: 'progress',
-        message: message.substring(0, 50), // Limit message length
+        message: message.substring(0, 50),
         progress: this.currentProgress,
         total: this.totalProgress,
         keepAlive
@@ -125,7 +141,7 @@ export class InstagramService implements IInstagramService {
           timeout: parseInt(process.env.TIMEOUT || '30000')
         });
 
-        const postLinks = await this.getPostLinks(page, startFrom + BATCH_SIZE);
+        const postLinks = await this.getCachedOrFetchLinks(page, startFrom + BATCH_SIZE);
         if (!postLinks.length) throw new InstagramError('No posts found');
 
         const fetchedPosts = await this.postSaver.loadFetchedPosts();
