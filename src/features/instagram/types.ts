@@ -17,6 +17,22 @@ export interface IInstagramService {
     startFrom?: number,
     onProgress?: ProgressCallback
   ): Promise<IInstagramPost[]>;
+  
+  fetchProfileData(
+    username: string,
+    dataTypes: ('posts' | 'stories' | 'highlights' | 'reels' | 'tagged')[],
+    limit?: number,
+    includeMetadata?: boolean,
+    includeEngagement?: boolean
+  ): Promise<any>;
+
+  fetchPostData(
+    url: string,
+    includeComments?: boolean,
+    includeLikers?: boolean,
+    includeMetadata?: boolean
+  ): Promise<any>;
+
   close(): Promise<void>;
 }
 

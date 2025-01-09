@@ -1,5 +1,5 @@
 import path from 'path';
-import { type ServerCapabilities } from '@modelcontextprotocol/sdk/types.js';
+import { type ServerCapabilities } from '@modelcontextprotocol/sdk/types';
 import { ErrorCode, McpError, type IServerConfig } from '../types/mcp.js';
 
 interface IEnvironmentVariables {
@@ -40,7 +40,7 @@ export class ConfigManager {
    */
   private loadConfig(): IServerConfig {
     const env = this.validateEnvironment();
-    const defaultSaveDir = path.join('/Users/ryan/CursorCode/pinkink', 'instagram_data');
+    const defaultSaveDir = path.join('C:/pink_ink', 'instagram_data');
 
     return {
       name: 'instagram-server',

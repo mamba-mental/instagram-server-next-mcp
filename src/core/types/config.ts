@@ -17,6 +17,23 @@ export interface IInstagramConfig {
   maxPostsPerBatch: number;
   batchBreakDelay: number;
   minDelay: number;
+  profile: {
+    saveDir: string;
+    photoQuality: 'low' | 'medium' | 'high';
+    scrapeInterval: number;
+    maxRetries: number;
+    retryDelay: number;
+    rateLimit: {
+      maxRequests: number;
+      perSeconds: number;
+    };
+    behavior: {
+      minDelay: number;
+      maxDelay: number;
+      scrollVariation: number;
+      mouseMovementVariation: number;
+    };
+  };
 }
 
 export interface IBrowserConfig {
@@ -25,6 +42,7 @@ export interface IBrowserConfig {
   windowHeight: number;
   defaultTimeout: number;
   navigationTimeout: number;
+  debugPort: number;
 }
 
 export interface IEnvironmentVariables {

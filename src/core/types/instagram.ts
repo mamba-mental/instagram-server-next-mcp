@@ -45,6 +45,47 @@ export interface IPostData {
   posterUrl?: string;
 }
 
+export interface IInstagramProfile {
+  username: string;
+  fullName: string;
+  bio: string;
+  profilePicUrl: string;
+  followersCount: number;
+  followingCount: number;
+  postsCount: number;
+  isPrivate: boolean;
+  isVerified: boolean;
+  websiteUrl?: string;
+  lastScraped: string;
+}
+
+export interface IProfileScrapeResult {
+  profile: IInstagramProfile;
+  success: boolean;
+  error?: string;
+  timestamp: string;
+}
+
+export interface IProfileScrapeOptions {
+  saveDir: string;
+  savePhotos: boolean;
+  saveMetadata: boolean;
+  maxRetries: number;
+  retryDelay: number;
+  behavior: {
+    minDelay: number;
+    maxDelay: number;
+    scrollVariation: number;
+    mouseMovementVariation: number;
+  };
+  rateLimit?: {
+    maxRequests: number;
+    perSeconds: number;
+    remaining: number;
+    resetTime: number;
+  };
+}
+
 export interface IGetInstagramPostsArgs {
   username: string;
   limit?: number | 'all';

@@ -1,5 +1,12 @@
 import { ErrorCode, McpError, type ErrorCodeType } from '../types/mcp.js';
 
+export class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigError';
+  }
+}
+
 /**
  * Custom error types for the Instagram MCP server
  */

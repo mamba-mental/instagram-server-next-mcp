@@ -136,11 +136,9 @@ export class InstagramService implements IInstagramService {
       try {
         this.sendProgress('Loading...', onProgress, true);
         
-        await page.goto(`https://www.instagram.com/${username}/`, {
-          waitUntil: 'domcontentloaded',
-          timeout: parseInt(process.env.TIMEOUT || '30000')
-        });
-
+        // Human-like navigation to profile
+        await this.humanNavigate(page, `https://www.instagram.com/${username}/`);
+        
         const postLinks = await this.getCachedOrFetchLinks(page, startFrom + BATCH_SIZE);
         if (!postLinks.length) throw new InstagramError('No posts found');
 
@@ -155,10 +153,8 @@ export class InstagramService implements IInstagramService {
         const posts: IInstagramPost[] = [];
         for (const postUrl of targetLinks) {
           try {
-            await page.goto(postUrl, {
-              waitUntil: 'domcontentloaded',
-              timeout: parseInt(process.env.TIMEOUT || '30000')
-            });
+            // Human-like navigation to post
+            await this.humanNavigate(page, postUrl);
 
             const postData = await this.extractPostData(page);
             if (!postData) continue;
@@ -174,7 +170,7 @@ export class InstagramService implements IInstagramService {
             await this.postSaver.saveFetchedPosts(fetchedPosts);
 
             posts.push(post);
-            await this.delay(2000);
+            await this.randomDelay(2000, 5000); // Random delay between posts
           } catch (error) {
             log('Post error: %s', error instanceof Error ? error.message : String(error));
             continue;
@@ -200,6 +196,33 @@ export class InstagramService implements IInstagramService {
     }
   }
 
+  private async humanNavigate(page: Page, url: string): Promise<void> {
+    // Random delay before navigation
+    await this.randomDelay(1000, 3000);
+    
+    // Navigate with human-like behavior
+    await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout: parseInt(process.env.TIMEOUT || '30000')
+    });
+
+    // Random scroll after load
+    await this.humanScroll(page, 300);
+  }
+
+  private async humanScroll(page: Page, baseDistance: number): Promise<void> {
+    const variance = 0.3; // 30% variance in scroll distance
+    const steps = 5 + Math.floor(Math.random() * 3); // 5-7 scroll steps
+    
+    for (let i = 0; i < steps; i++) {
+      const scrollAmount = baseDistance * (1 + (Math.random() * variance - variance/2));
+      await page.evaluate((amount) => {
+        window.scrollBy(0, amount);
+      }, scrollAmount);
+      await this.randomDelay(500, 1500); // Random delay between scrolls
+    }
+  }
+
   private async getPostLinks(page: Page, targetCount: number): Promise<string[]> {
     let previousHeight = 0;
     let attempts = 0;
@@ -207,9 +230,10 @@ export class InstagramService implements IInstagramService {
 
     while (attempts < SCROLL_ATTEMPTS) {
       previousHeight = await page.evaluate(() => document.body.scrollHeight);
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await this.delay(2000);
-
+      
+      // Human-like scroll
+      await this.humanScroll(page, 500);
+      
       links = await page.evaluate(() => {
         const links = new Set<string>();
         document.querySelectorAll('a').forEach(anchor => {
@@ -226,7 +250,7 @@ export class InstagramService implements IInstagramService {
       const currentHeight = await page.evaluate(() => document.body.scrollHeight);
       if (currentHeight <= previousHeight) {
         attempts++;
-        await this.delay(1000);
+        await this.randomDelay(1000, 3000);
       }
     }
 
@@ -277,8 +301,9 @@ export class InstagramService implements IInstagramService {
     }
   }
 
-  private async delay(ms: number): Promise<void> {
-    await new Promise(resolve => setTimeout(resolve, ms));
+  private async randomDelay(min: number, max: number): Promise<void> {
+    const delay = Math.random() * (max - min) + min;
+    await new Promise(resolve => setTimeout(resolve, delay));
   }
 
   public async close(): Promise<void> {
@@ -286,6 +311,177 @@ export class InstagramService implements IInstagramService {
     if (this.context) {
       await this.context.close();
       this.context = null;
+    }
+  }
+
+  public async fetchProfileData(
+    username: string,
+    dataTypes: ('posts' | 'stories' | 'highlights' | 'reels' | 'tagged')[],
+    limit?: number,
+    includeMetadata?: boolean,
+    includeEngagement?: boolean
+  ): Promise<any> {
+    const context = await this.initContext();
+    const page = await context.newPage();
+    
+    try {
+      await this.humanNavigate(page, `https://www.instagram.com/${username}/`);
+      
+      const profileData: any = {
+        username,
+        dataTypes: {}
+      };
+
+      if (dataTypes.includes('posts')) {
+        const posts = await this.fetchPosts(username, limit || 12);
+        profileData.dataTypes.posts = posts;
+      }
+
+      if (dataTypes.includes('stories')) {
+        const stories = await this.extractStories(page);
+        profileData.dataTypes.stories = stories;
+      }
+
+      if (dataTypes.includes('highlights')) {
+        const highlights = await this.extractHighlights(page);
+        profileData.dataTypes.highlights = highlights;
+      }
+
+      if (dataTypes.includes('reels')) {
+        const reels = await this.extractReels(page);
+        profileData.dataTypes.reels = reels;
+      }
+
+      if (dataTypes.includes('tagged')) {
+        const tagged = await this.extractTaggedPosts(page);
+        profileData.dataTypes.tagged = tagged;
+      }
+      
+      return profileData;
+    } finally {
+      await page.close();
+    }
+  }
+
+  public async fetchPostData(
+    url: string,
+    includeComments?: boolean,
+    includeLikers?: boolean,
+    includeMetadata?: boolean
+  ): Promise<any> {
+    const context = await this.initContext();
+    const page = await context.newPage();
+    
+    try {
+      await this.humanNavigate(page, url);
+      
+      const postData = await this.extractPostData(page);
+      if (!postData) {
+        throw new InstagramError('Failed to extract post data');
+      }
+
+      const result: any = {
+        ...postData,
+        metadata: includeMetadata ? await this.extractPostMetadata(page) : undefined,
+        comments: includeComments ? await this.extractComments(page) : undefined,
+        likers: includeLikers ? await this.extractLikers(page) : undefined
+      };
+
+      return result;
+    } finally {
+      await page.close();
+    }
+  }
+
+  private async extractPostMetadata(page: Page): Promise<any> {
+    // TODO: Implement metadata extraction
+    return {};
+  }
+
+  private async extractComments(page: Page): Promise<any[]> {
+    // TODO: Implement comment extraction
+    return [];
+  }
+
+  private async extractLikers(page: Page): Promise<any[]> {
+    // TODO: Implement likers extraction
+    return [];
+  }
+
+  private async extractStories(page: Page): Promise<any[]> {
+    try {
+      return await page.evaluate(() => {
+        const storyElements = Array.from(document.querySelectorAll('[aria-label="Story"]'));
+        return storyElements.map(story => {
+          const img = story.querySelector('img');
+          return {
+            url: img?.src || '',
+            timestamp: new Date().toISOString()
+          };
+        });
+      });
+    } catch (error) {
+      log('Story extraction error: %s', error instanceof Error ? error.message : String(error));
+      return [];
+    }
+  }
+
+  private async extractHighlights(page: Page): Promise<any[]> {
+    try {
+      return await page.evaluate(() => {
+        const highlightElements = Array.from(document.querySelectorAll('[aria-label="Highlight"]'));
+        return highlightElements.map(highlight => {
+          const img = highlight.querySelector('img');
+          return {
+            url: img?.src || '',
+            title: highlight.getAttribute('aria-label') || '',
+            timestamp: new Date().toISOString()
+          };
+        });
+      });
+    } catch (error) {
+      log('Highlight extraction error: %s', error instanceof Error ? error.message : String(error));
+      return [];
+    }
+  }
+
+  private async extractReels(page: Page): Promise<any[]> {
+    try {
+      return await page.evaluate(() => {
+        const reelElements = Array.from(document.querySelectorAll('[aria-label="Reel"]'));
+        return reelElements.map(reel => {
+          const video = reel.querySelector('video');
+          return {
+            url: video?.src || '',
+            poster: video?.poster || '',
+            timestamp: new Date().toISOString()
+          };
+        });
+      });
+    } catch (error) {
+      log('Reel extraction error: %s', error instanceof Error ? error.message : String(error));
+      return [];
+    }
+  }
+
+  private async extractTaggedPosts(page: Page): Promise<any[]> {
+    try {
+      await page.click('text=Tagged');
+      await this.randomDelay(1000, 3000);
+      
+      return await page.evaluate(() => {
+        const postElements = Array.from(document.querySelectorAll('[aria-label="Post"]'));
+        return postElements.map(post => {
+          const img = post.querySelector('img');
+          return {
+            url: img?.src || '',
+            timestamp: new Date().toISOString()
+          };
+        });
+      });
+    } catch (error) {
+      log('Tagged post extraction error: %s', error instanceof Error ? error.message : String(error));
+      return [];
     }
   }
 }

@@ -15,6 +15,7 @@
     "sourceMap": true,
     "baseUrl": "src",
     "paths": {
+      "@modelcontextprotocol/sdk/*": ["./core/types/*"],
       "*": ["*"]
     },
     "experimentalDecorators": true,
